@@ -1,7 +1,6 @@
-package db_operation
+package main
 
 import (
-	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -10,6 +9,8 @@ import (
 	"time"
 
 	"github.com/Riku-KANO/db-operation/models"
+	"github.com/upper/db/v4"
+	"github.com/upper/db/v4/adapter/postgresql"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -33,9 +34,9 @@ type Server struct {
 func (a *App) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
-
+	r.Get("/health", a.healthCheck)
 	r.Get("/users", a.getUsersHandler)
-
+	r.Post("/users", a.createUserHandler)
 	return r
 }
 
@@ -53,17 +54,17 @@ func (a *App) ListenAndServe() error {
 	return srv.ListenAndServe()
 }
 
-func openDB(dsn string) (*sql.DB, error) {
-	db, err := sql.Open("postgres", dsn)
+func openDB(settings db.ConnectionURL) (db.Session, error) {
+	sess, err := postgresql.Open(settings)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := sess.Ping(); err != nil {
 		return nil, err
 	}
-
-	return db, nil
+	log.Println("DB connection is completed")
+	return sess, nil
 }
 
 func main() {
@@ -76,20 +77,18 @@ func main() {
 		url: "http://localhost:8080",
 	}
 
-	const (
-		user = "app"
-		password = "password"
-		host = "localhost"
-		port = "5455"
-		dbname = "database"
-	)
+	var dbSettings = postgresql.ConnectionURL{
+		Database: "database",
+		Host:     "localhost:5455",
+		User:     "root",
+		Password: "password",
+	}
 
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", user, password, host, port, dbname)
-	db, err := openDB(dsn)
+	sess, err := openDB(dbSettings)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer sess.Close()
 
 	// initialization of database table
 	if *initdb {
@@ -97,7 +96,8 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		_, err = db.Exec(string(query))
+
+		_, err = sess.SQL().Exec((string(query)))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -109,7 +109,7 @@ func main() {
 		server: server,
 		infoLog: log.New(os.Stdout, "INFO\t", log.Ltime|log.Ldate|log.Lshortfile),
 		errLog: log.New(os.Stderr, "ERROR\t", log.Ltime|log.Ldate|log.Lshortfile),
-		models: models.New(),
+		models: models.New(sess),
 	}
 
 	
